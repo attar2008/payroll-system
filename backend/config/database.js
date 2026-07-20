@@ -2,14 +2,15 @@ import pg from 'pg';
 
 const { Pool } = pg;
 
-// Mengambil string koneksi database
-const connectionString = process.env.DATABASE_URL;
+console.log('Memaksa koneksi manual ke database Cloud PostgreSQL (Supabase)...');
 
-console.log('Memaksa koneksi ke database Cloud PostgreSQL (Supabase)...');
-
+// Kita urai secara aman. Jika URL bermasalah, konfigurasi di bawah ini akan memotong parameter aneh.
 const db = new Pool({
-    connectionString: connectionString,
-    ssl: { rejectUnauthorized: false }
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false },
+    max: 1, // Sangat penting untuk Vercel Serverless agar tidak kehabisan kuota koneksi Supabase
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 2000,
 });
 
 // Pembuatan tabel otomatis di Supabase secara aman
@@ -61,43 +62,30 @@ initDatabase();
 // MIGRASI FUNGSI WRAPPER: SQLITE -> POSTGRES
 // ==========================================
 
-// 1. Perbaikan fungsi db.run()
 db.run = function (query, params, callback) {
     if (typeof params === 'function') { callback = params; params = []; }
-    
     let index = 1;
     const pgQuery = query.replace(/\?/g, () => `$${index++}`);
-    
     db.query(pgQuery, params, (err, res) => {
         if (callback) callback(err, res);
     });
 };
 
-// 2. Perbaikan fungsi db.all()
 db.all = function (query, params, callback) {
     if (typeof params === 'function') { callback = params; params = []; }
-    
     let index = 1;
     const pgQuery = query.replace(/\?/g, () => `$${index++}`);
-    
     db.query(pgQuery, params, (err, res) => {
-        if (callback) {
-            callback(err, res ? res.rows : null);
-        }
+        if (callback) callback(err, res ? res.rows : []);
     });
 };
 
-// 3. Perbaikan fungsi db.get()
 db.get = function (query, params, callback) {
     if (typeof params === 'function') { callback = params; params = []; }
-    
     let index = 1;
     const pgQuery = query.replace(/\?/g, () => `$${index++}`);
-    
     db.query(pgQuery, params, (err, res) => {
-        if (callback) {
-            callback(err, res && res.rows ? res.rows[0] : null);
-        }
+        if (callback) callback(err, res && res.rows ? res.rows[0] : null);
     });
 };
 
