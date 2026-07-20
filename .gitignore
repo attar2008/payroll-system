@@ -1,0 +1,14 @@
+# Mengabaikan folder node_modules agar tidak berat
+node_modules/
+
+# Mengabaikan database agar data gaji tidak bocor
+payroll.db
+
+# Mengabaikan file hasil build frontend agar tidak double
+frontend/dist/
+
+# Mengabaikan file lingkungan (jika nanti pakai .env)
+.env
+
+# Mengabaikan log error
+*.log
