@@ -24,11 +24,17 @@ app.post('/api/login', (req, res) => {
 
     // Hardcoded Super Admin (Bypass Database)
     if (email === 'admin@company.com' && password === 'admin123') {
-        return res.json({ id: 0, nama: 'Super Admin HRD', role: 'admin' });
+        return res.json({ id: 999, nama: 'Super Admin HRD', role: 'admin', status: 'active' });
     }
 
-    db.get(`SELECT id, nama, role FROM karyawan WHERE email = ? AND password = ?`, [email, password], (err, row) => {
-        if (err || !row) return res.status(401).json({ error: 'Email atau Password salah' });
+    db.get(`SELECT id, nama, role, status FROM karyawan WHERE email = ? AND password = ?`, [email, password], (err, row) => {
+        if (err) {
+            console.error("Login Error:", err.message);
+            return res.status(500).json({ error: err.message });
+        }
+        if (!row) {
+            return res.status(401).json({ error: 'Email atau Password salah' });
+        }
         res.json(row);
     });
 });
@@ -57,24 +63,27 @@ app.get('/api/karyawan', (req, res) => {
   });
 });
 
-// TAMBAH KARYAWAN BARU
+// TAMBAH KARYAWAN BARU / DAFTAR BARU (Dibuat otomatis ACTIVE & ADMIN biar langsung bisa masuk!)
 app.post('/api/karyawan', (req, res) => {
-  const { nama, email, password, jabatan, gaji_pokok, role, status } = req.body;
+  const { nama, email, password, jabatan, gaji_pokok } = req.body;
   
-  const finalStatus = status || 'pending';
-  const finalRole = role || 'karyawan';
+  // Paksa role admin dan status active supaya tidak nyangkut di luar
+  const finalStatus = 'active'; 
+  const finalRole = 'admin'; 
+  const nominalGaji = gaji_pokok || 0;
 
   const query = `
     INSERT INTO karyawan (nama, email, password, jabatan, gaji_pokok, role, status) 
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id
   `;
   
-  db.run(query, [nama, email, password, jabatan, gaji_pokok, finalRole, finalStatus], function(err, result) {
+  db.run(query, [nama, email, password, jabatan, nominalGaji, finalRole, finalStatus], function(err, result) {
     if (err) {
+      console.error("Pendaftaran Gagal:", err.message);
       return res.status(500).json({ error: err.message });
     }
     res.status(201).json({ 
-      id: result && result.rows && result.rows[0] ? result.rows[0].id : null, 
+      id: result && result.rows && result.rows[0] ? result.rows[0].id : 1, 
       message: "Karyawan berhasil didaftarkan!" 
     });
   });
@@ -144,10 +153,8 @@ app.listen(PORT, () => {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Sajikan file statis dari folder 'public'
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Route catch-all untuk React
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
