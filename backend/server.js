@@ -9,45 +9,12 @@ import {
     getSlipKaryawan,
     updatePasswordKaryawan 
 } from './controllers/payrollController.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 const app = express();
 app.use(cors());
 app.use(express.json());
-
-// =========================================================================
-// ANTI-CRASH DATABASE CHECKER (Aman dari Error ALTER TABLE)
-// =========================================================================
-db.serialize(() => {
-    // 1. Buat tabel jika belum ada
-    db.run(`CREATE TABLE IF NOT EXISTS karyawan (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nama TEXT NOT NULL,
-        jabatan TEXT NOT NULL,
-        gaji_pokok REAL DEFAULT 0,
-        email TEXT,
-        password TEXT,
-        role TEXT DEFAULT 'karyawan'
-    )`, (err) => {
-        if (!err) {
-            // 2. Cek struktur kolom secara aman menggunakan PRAGMA
-            db.all(`PRAGMA table_info(karyawan)`, (pragmaErr, columns) => {
-                if (!pragmaErr) {
-                    // Cari tahu apakah kolom 'gaji_pokok' sudah ada
-                    const hasGajiPokok = columns.some(col => col.name === 'gaji_pokok');
-                    
-                    // Kalau BELUM ada, baru kita jalankan ALTER TABLE
-                    if (!hasGajiPokok) {
-                        db.run(`ALTER TABLE karyawan ADD COLUMN gaji_pokok REAL DEFAULT 0`, (alterErr) => {
-                            if (!alterErr) console.log("⚡ Kolom 'gaji_pokok' berhasil ditambahkan!");
-                        });
-                    } else {
-                        console.log("✅ Tabel 'karyawan' dan struktur kolom sudah aman!");
-                    }
-                }
-            });
-        }
-    });
-});
 
 // =========================================================================
 // AUTH ENDPOINT (Sistem Login)
@@ -55,6 +22,7 @@ db.serialize(() => {
 app.post('/api/login', (req, res) => {
     const { email, password } = req.body;
 
+    // Hardcoded Super Admin (Bypass Database)
     if (email === 'admin@company.com' && password === 'admin123') {
         return res.json({ id: 0, nama: 'Super Admin HRD', role: 'admin' });
     }
@@ -73,29 +41,26 @@ app.post('/api/payroll', createPayroll);
 app.get('/api/payroll/karyawan/:id', getSlipKaryawan);
 app.put('/api/karyawan/ubah-password/:id', updatePasswordKaryawan);
 
-
 // =========================================================================
-// ROUTE ENDPOINT - KARYAWAN (CRUD DENGAN FIX AUTO-EMAIL & PASSWORD)
+// ROUTE ENDPOINT - KARYAWAN
 // =========================================================================
 
 // AMBIL SEMUA KARYAWAN
 app.get('/api/karyawan', (req, res) => {
-  // Kita tambahkan 'status' di dalam select query
   const query = "SELECT id, nama, email, jabatan, gaji_pokok, role, status FROM karyawan";
   
   db.all(query, [], (err, rows) => {
     if (err) {
       return res.status(500).json({ error: err.message });
     }
-    res.json(rows);
+    res.json(rows || []);
   });
 });
 
-// TAMBAH KARYAWAN BARU (FIXED: Auto-generate Email & Password)
+// TAMBAH KARYAWAN BARU
 app.post('/api/karyawan', (req, res) => {
   const { nama, email, password, jabatan, gaji_pokok, role, status } = req.body;
   
-  // Jika 'status' tidak dikirim dari frontend, otomatis diset ke 'pending'
   const finalStatus = status || 'pending';
   const finalRole = role || 'karyawan';
 
@@ -104,18 +69,18 @@ app.post('/api/karyawan', (req, res) => {
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `;
   
-  db.run(query, [nama, email, password, jabatan, gaji_pokok, finalRole, finalStatus], function(err) {
+  db.run(query, [nama, email, password, jabatan, gaji_pokok, finalRole, finalStatus], function(err, result) {
     if (err) {
       return res.status(500).json({ error: err.message });
     }
     res.status(201).json({ 
-      id: this.lastID, 
+      id: result && result.rows && result.rows[0] ? result.rows[0].id : null, 
       message: "Karyawan berhasil didaftarkan!" 
     });
   });
 });
 
-// EDIT / UPDATE DATA KARYAWAN (FIXED: Menjaga Kelengkapan Kolom SQLite)
+// EDIT / UPDATE DATA KARYAWAN
 app.put('/api/karyawan/:id', (req, res) => {
     const { id } = req.params;
     const { nama, jabatan, gaji_pokok, gaji, email, password } = req.body;
@@ -134,29 +99,24 @@ app.put('/api/karyawan/:id', (req, res) => {
             console.error("Database Update Error:", err.message);
             return res.status(500).json({ error: err.message });
         }
-        res.json({ message: 'Data karyawan berhasil diupdate, Blay!' });
+        res.json({ message: 'Data karyawan berhasil diupdate!' });
     });
 });
 
-// Endpoint untuk menyetujui / mengaktifkan akun karyawan baru sekaligus set gaji pokok
+// Endpoint verifikasi / aktifkan akun karyawan
 app.put('/api/karyawan/:id/verify', (req, res) => {
   const { id } = req.params;
-  const { gaji_pokok } = req.body; // <--- Ambil gaji_pokok yang dikirim dari frontend
+  const { gaji_pokok } = req.body;
 
-  // Validasi: Pastikan gaji pokoknya dikirim dan berupa angka yang valid
   if (gaji_pokok === undefined || gaji_pokok === null || isNaN(gaji_pokok)) {
     return res.status(400).json({ error: "Gaji pokok harus diisi dengan angka yang valid!" });
   }
 
-  // Query diubah untuk meng-update status DAN gaji_pokok sekaligus
   const query = "UPDATE karyawan SET status = 'active', gaji_pokok = ? WHERE id = ?";
 
   db.run(query, [gaji_pokok, id], function(err) {
     if (err) {
       return res.status(500).json({ error: err.message });
-    }
-    if (this.changes === 0) {
-      return res.status(404).json({ error: "Karyawan tidak ditemukan" });
     }
     res.json({ message: "Akun karyawan berhasil diaktifkan dengan gaji pokok terdaftar!" });
   });
@@ -176,13 +136,10 @@ app.delete('/api/karyawan/:id', (req, res) => {
 // =========================================================================
 // JALANKAN SERVER
 // =========================================================================
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-    console.log(`Server Backend Payroll jalan di http://localhost:${PORT}`);
+    console.log(`Server Backend Payroll jalan di port ${PORT}`);
 });
-
-import path from 'path';
-import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
